@@ -1,0 +1,13 @@
+#lang racket
+(require (except-in
+          (prefix-in S1- "../Scope/Scope1.rkt")
+          S1-#%func)
+         "../ML-Helpers.rkt")
+
+(provide (unprefix-out S1- "../Scope/Scope1.rkt")
+         (rename-out [my-lam #%lambda]))
+;;Pretty much racket lambda, but without the (lambda list-arg body) form.
+;We also change it's name so it prints nicer when there's errors
+(define-syntax-rule (my-lam (args ...) body ... last-body)
+  (procedure-rename (lambda (args ...) (check-decrement-fuel) body ... last-body)
+                    (string->symbol "anonymous function")))

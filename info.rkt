@@ -1,0 +1,1 @@
+(module info setup/infotab (#%module-begin (define assume-virtual-sources #t) (define package-content-state (quote (binary-lib "7.4"))) (define deps (list "megaparsack")) (define collection (quote multi))))

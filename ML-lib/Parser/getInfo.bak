@@ -1,0 +1,13 @@
+#lang racket
+(require "Indenter.rkt")
+(require "lexer.rkt")
+(provide get-info)
+(define (get-info port src-mod src-line src-col src-pos)
+    (define (handle-query key default)
+      (case key
+        [(drracket:indentation)
+         indent-ML]
+        [(color-lexer) color-ML]
+       ; [(drracket:opt-out-toolbar-buttons) (list 'macro-stepper 'drracket:syncheck 'debug-tool)]
+        [else default]))
+    handle-query)

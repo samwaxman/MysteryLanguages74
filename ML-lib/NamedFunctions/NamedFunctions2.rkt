@@ -1,0 +1,141 @@
+#lang racket
+(require (prefix-in Cond- "../Conditionals/Conditionals3.rkt")
+         (for-syntax syntax/parse)
+         racket/splicing
+         "../ML-Helpers.rkt"
+         (for-syntax racket)
+         racket/stxparam)
+(provide
+ (except-out (unprefix-out Cond- "../Conditionals/Conditionals3.rkt")
+              Cond-#%id Cond-#%module-begin Cond-#%let Cond-#%block)
+ #%block
+ (rename-out [my-let #%let]
+             [my-module-begin #%module-begin]
+             [func #%func])
+ #%id)
+
+
+
+
+(struct not-initialized ())
+
+
+;;Our environment!
+(define env '())
+
+;;Must use a function defined in this file
+;;To set the environment. set! is not allowed
+;;To appear in the syntax of other files when
+;;It's trying to set a module provided identifier
+(define (set-env new-env)
+  (set! env new-env))
+
+;; Delays the lookup until runtime.
+(define-syntax-rule (#%id var)
+  (lookup 'var))
+
+;;Looks up var (must be a literal, not the var itself) in the environment
+(define (lookup var)
+  (define (lookup-helper var flat-env)
+    (cond
+      [(null? flat-env) (raise-user-error (~a "Unbound identifier: " var))]
+      [(cons? flat-env) (if (equal? (vector-ref (car flat-env) 0)
+                                 var)
+                            (if (not-initialized? (vector-ref (car flat-env) 1))
+                                (raise-user-error (~a var ": undefined \n cannot use before initialization"))
+                                (vector-ref (car flat-env) 1))
+                            (lookup-helper var (cdr flat-env)))]))
+  (lookup-helper var (flatten env)))
+
+;;Pushes a binding onto the environment
+(define-syntax-rule (push id binding)
+  (set-env (cons (cons (vector 'id binding) (car env)) (cdr env))))
+
+;;Begins a new scope
+(define (begin-scope)
+  (set-env (cons null env)))
+
+;;Pops the things we defined in the current scope
+;;from the environment
+(define (exit-scope)
+  (set-env (cdr env)))
+
+;; Adds the bindings to the environment, evaluates the body,
+;; and then pops off the bindings
+(define-syntax-rule (with-bindings ([var binding] ...) body ...)
+  (begin
+    (begin-scope)
+    (push var binding) ...
+    ;;Change the immediate lambdas to let () in these cases
+    (let ([result (let () body ...)])
+      (exit-scope)
+      result)))
+
+
+
+(define-syntax-rule (my-let ([id binding]) body ... last-body)
+ (begin (begin-scope) (push id binding) (let ([result (let () body ... last-body)])
+                                           (exit-scope) result)))
+
+(define-syntax-rule (my-module-begin body ...)
+  (Cond-#%module-begin
+   (set-env '())
+   (lift-functions (my-let ([recap Cond-recap])
+                           (my-let ([print student-print])
+                                   body ...)))))
+
+
+
+;;Pushes func binding onto the environment,
+;;and pushes the function-argument bindings onto the environment
+;;whenever the function is called.
+(define-syntax (func stx)
+  (syntax-case stx ()
+    [(_ name (args ...) body ... last-body)
+       #'(push name
+               (procedure-rename
+                (lambda (args ...) (check-decrement-fuel)
+                  (with-bindings ([args args] ...) body ... last-body))
+                'name))]))
+
+(define-syntax-rule (#%block first-body body ...)
+  (with-bindings () first-body body ...))
+
+(define-syntax (get-functions stx)
+  (syntax-parse stx
+    [(_ ()) #'()]
+    [(_ (first-body body ...))
+     (syntax-parse #'first-body #:literals(func)
+       [(func name(args ...) func-body ... last-body) #`(name #,@(local-expand #'(get-functions (body ...)) 'expression #f))]
+       [x #'(get-functions (body ...))])]))
+
+(define-syntax (initialize-functions stx)                         
+  (syntax-parse stx
+    [(_ (name ...))
+     (let ([duplicate (check-duplicates (map (lambda (x) (syntax->datum x)) (syntax->list #'(name ...))))])
+                  (if duplicate
+                      (raise-user-error (~a "Duplicate function names: " duplicate))
+                      #'((push name (not-initialized)) ...)))]))
+
+(define-syntax (lift-functions stx)
+  (syntax-parse stx #:literals (#%block my-let func Cond-#%testI Cond-#%testE #%id Cond-#%if)
+    [(_ (#%block body ...))
+     (with-syntax ([func-names (local-expand #'(get-functions (body ...)) 'expression #f)])
+     #`(#%block #,@(local-expand #`(initialize-functions func-names) 'expression #f)
+                                 (lift-functions body) ...))]
+    [(_ (my-let ([name binding]) body ...))
+      (with-syntax ([func-names (local-expand #'(get-functions (body ...)) 'expression #f)])
+     #`(my-let ([name (lift-functions binding)])
+               #,@(local-expand #'(initialize-functions func-names) 'expression #f)
+               (lift-functions body) ...))]
+    [(_ (func name(args ...) body ...))
+      (with-syntax ([func-names (local-expand #'(get-functions (body ...)) 'expression #f)])
+     #`(func name(args ...) #,@(local-expand #'(initialize-functions func-names) 'expression #f)
+                                 (lift-functions body) ...))]
+    [(_ (Cond-#%if syn ...)) #'(Cond-#%if (lift-functions syn) ...)]
+    [(_ (#%id x)) #'(#%id x)]
+    [(_ (Cond-#%testI syn ...)) #'(Cond-#%testI (lift-functions syn) ...)]
+    [(_ (Cond-#%testE syn ...)) #'(Cond-#%testE (lift-functions syn) ...)]
+    [(_ (x ...)) #'(Cond-#%app (lift-functions x) ...)]
+    [(_ x) #'x]))
+

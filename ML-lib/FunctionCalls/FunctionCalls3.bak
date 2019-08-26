@@ -1,0 +1,54 @@
+#lang racket
+;THIS LANGUAGE HAS COBOL-LIKE FUNCTION CALLS
+;EACH FUNCTION HAS A SPOT TO STORE ITS RETURN ADRESS
+;WHEN CALLED. IF IT'S USED RECURSIVELY, THIS RETURN ADRESS
+;GETS OVERWRITTEN AND RESULTS IN INFINITE LOOPS.
+
+(require (prefix-in Cond- "../Conditionals/Conditionals3.rkt")
+          (only-in "../Scope/Scope1.rkt" #%reassign)
+         "../ML-Helpers.rkt"
+         (for-syntax syntax/parse))
+(provide
+ (rename-out [my-app #%app]
+             [my-mod #%module-begin])
+ (except-out (unprefix-out Cond- "../Conditionals/Conditionals3.rkt")
+             Cond-#%app Cond-#%module-begin)
+ #%reassign
+ #%func)
+
+;The return adress is mutable, and each procedure only has one.
+;That way it can be overwritten.
+(struct procedure (lam (continuation #:mutable)))
+
+
+;If the continuation is overwritten via recursion,
+;will loop forever (except the fuel with cause it to error)
+
+;(Note, this means if students try hard, they can make this one time out
+;at slightly different points than the other two. Not much to be done there.)
+(define-syntax-rule (#%func name (args ...) body ... last-body)
+  (begin
+    (define name
+      (procedure (procedure-rename (lambda (args ...)
+                  (call/cc (lambda (k)
+                             (set-procedure-continuation! name k)
+                             (print k)
+                             ;;This one is so we decrement on infinite recursion
+                             (check-decrement-fuel)
+                             (let ([hold-procedure name]
+                               [result ((lambda () body ... last-body))])
+                               ;;this one is so we decrement on terminated recursion
+                               (check-decrement-fuel)
+                               ((procedure-continuation hold-procedure) result))))) 'name)
+                 #f))))
+
+;If you're trying to apply a procedure struct,
+;apply its lambda instead.
+(define-syntax-rule (my-app proc args ...)
+  (if (procedure? proc)
+      (#%arity-app (procedure-lam proc) args ...)
+      (#%arity-app proc args ...)))
+
+(define-syntax-rule (my-mod body ...)
+  (Cond-#%module-begin (fill-tank) body ...))
+
